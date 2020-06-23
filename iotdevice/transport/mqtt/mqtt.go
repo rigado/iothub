@@ -25,6 +25,9 @@ const DefaultQoS = 1
 // TransportOption is a transport configuration option.
 type TransportOption func(tr *Transport)
 
+// ConnectListener is a func that gets called onConnection
+type ConnectListener func()
+
 // WithLogger sets logger for errors and warnings
 // plus debug messages when it's enabled.
 func WithLogger(l logger.Logger) TransportOption {
@@ -52,6 +55,12 @@ func WithClientOptionsConfig(fn func(opts *mqtt.ClientOptions)) TransportOption 
 func WithWebSocket(enable bool) TransportOption {
 	return func(tr *Transport) {
 		tr.webSocket = enable
+	}
+}
+
+func WithConnectListener(connListener ConnectListener) TransportOption {
+	return func(tr *Transport) {
+		tr.connListener = connListener
 	}
 }
 
@@ -83,6 +92,7 @@ type Transport struct {
 	logger logger.Logger
 	cocfg  func(opts *mqtt.ClientOptions)
 
+	connListener ConnectListener
 	webSocket bool
 }
 
@@ -139,6 +149,9 @@ func (tr *Transport) Connect(ctx context.Context, creds transport.Credentials) e
 	o.SetMaxReconnectInterval(30 * time.Second) // default is 15min, way to long
 	o.SetOnConnectHandler(func(c mqtt.Client) {
 		tr.logger.Debugf("connection established")
+		if tr.connListener != nil {
+			tr.connListener()
+		}
 		tr.subm.RLock()
 		for _, sub := range tr.subs {
 			if err := sub(); err != nil {
