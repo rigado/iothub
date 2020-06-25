@@ -304,7 +304,7 @@ func (tr *Transport) subDirectMethods(ctx context.Context, mux transport.MethodD
 					tr.logger.Errorf("dispatch error: %s", err)
 					return
 				}
-				dst := fmt.Sprintf("$iothub/methods/res/%d/?$rid=%d", rc, rid)
+				dst := fmt.Sprintf("$iothub/methods/res/%d/?$rid=%s", rc, rid)
 				if err = tr.send(ctx, dst, DefaultQoS, b); err != nil {
 					tr.logger.Errorf("method response error: %s", err)
 					return
@@ -316,31 +316,28 @@ func (tr *Transport) subDirectMethods(ctx context.Context, mux transport.MethodD
 
 // returns method name and rid
 // format: $iothub/methods/POST/{method}/?$rid={rid}
-func parseDirectMethodTopic(s string) (string, int, error) {
+func parseDirectMethodTopic(s string) (string, string, error) {
 	const prefix = "$iothub/methods/POST/"
 
 	s, err := url.QueryUnescape(s)
 	if err != nil {
-		return "", 0, err
+		return "", "", err
 	}
 	u, err := url.Parse(s)
 	if err != nil {
-		return "", 0, err
+		return "", "", err
 	}
 
 	p := strings.TrimRight(u.Path, "/")
 	if !strings.HasPrefix(p, prefix) {
-		return "", 0, errors.New("malformed direct method topic")
+		return "", "", errors.New("malformed direct method topic")
 	}
 
 	q := u.Query()
 	if len(q["$rid"]) != 1 {
-		return "", 0, errors.New("$rid is not available")
+		return "", "", errors.New("$rid is not available")
 	}
-	rid, err := strconv.Atoi(q["$rid"][0])
-	if err != nil {
-		return "", 0, fmt.Errorf("$rid parse error: %s", err)
-	}
+	rid := q["$rid"][0]
 	return p[len(prefix):], rid, nil
 }
 
