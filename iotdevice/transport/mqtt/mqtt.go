@@ -64,6 +64,14 @@ func WithConnectListener(connListener ConnectListener) TransportOption {
 	}
 }
 
+// WithModelId makes the mqtt client register the specified DTDL modeldID when a connection
+// is established, this is useful for Azure PNP integration.
+func WithModelID(modelID string) TransportOption {
+	return func(tr *Transport) {
+		tr.mid = modelID
+	}
+}
+
 // New returns new Transport transport.
 // See more: https://docs.microsoft.com/en-us/azure/iot-hub/iot-hub-mqtt-support
 func New(opts ...TransportOption) transport.Transport {
@@ -82,6 +90,7 @@ type Transport struct {
 
 	did string // device id
 	rid uint32 // request id, incremented each request
+	mid string // model id
 
 	subm sync.RWMutex // cannot use mu for protecting subs
 	subs []subFunc    // on-connect mqtt subscriptions
@@ -122,7 +131,11 @@ func (tr *Transport) Connect(ctx context.Context, creds transport.Credentials) e
 		tlsCfg.Certificates = append(tlsCfg.Certificates, *crt)
 	}
 
-	username := creds.GetHostName() + "/" + creds.GetDeviceID() + "/api-version=2019-03-30"
+	username := creds.GetHostName() + "/" + creds.GetDeviceID() + "/api-version=2020-09-30"
+	if tr.mid != "" {
+		username += "&model-id=" + url.QueryEscape(tr.mid)
+	}
+
 	o := mqtt.NewClientOptions()
 	o.SetTLSConfig(tlsCfg)
 	if tr.webSocket {
@@ -379,7 +392,7 @@ func (tr *Transport) request(ctx context.Context, topic string, b []byte) (*resp
 
 	select {
 	case r := <-rch:
-		if r.code < 200 && r.code > 299 {
+		if r.code < 200 || r.code > 299 {
 			return nil, fmt.Errorf("request failed with %d response code", r.code)
 		}
 		return r, nil
