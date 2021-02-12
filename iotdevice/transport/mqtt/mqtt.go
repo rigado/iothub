@@ -93,7 +93,7 @@ type Transport struct {
 	cocfg  func(opts *mqtt.ClientOptions)
 
 	connListener ConnectListener
-	webSocket bool
+	webSocket    bool
 }
 
 type resp struct {
@@ -550,7 +550,7 @@ func (tr *Transport) Close() error {
 	default:
 		close(tr.done)
 	}
-	if tr.conn != nil && tr.conn.IsConnected() {
+	if tr.conn != nil {
 		tr.conn.Disconnect(250)
 		tr.logger.Debugf("disconnected")
 	}
