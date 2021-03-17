@@ -14,7 +14,7 @@ type Transport interface {
 	SetLogger(logger logger.Logger)
 	Connect(ctx context.Context, creds Credentials) error
 	Send(ctx context.Context, msg *common.Message) error
-	RegisterDirectMethods(ctx context.Context, mux MethodDispatcher) error
+	RegisterDirectMethods(parentContext context.Context, subscribeTimeout time.Duration,responseTimeout time.Duration,mux MethodDispatcher) error
 	SubscribeEvents(ctx context.Context, mux MessageDispatcher) error
 	SubscribeTwinUpdates(ctx context.Context, mux TwinStateDispatcher) error
 	RetrieveTwinProperties(ctx context.Context) (payload []byte, err error)

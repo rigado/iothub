@@ -114,9 +114,8 @@ type Transport struct {
 	logger logger.Logger
 	cocfg  func(opts *mqtt.ClientOptions)
 
-	connListener ConnectListener
-	webSocket    bool
-
+	connListener       ConnectListener
+	webSocket          bool
 	credentialLifetime time.Duration
 }
 
@@ -170,7 +169,6 @@ func (tr *Transport) Connect(ctx context.Context, creds transport.Credentials) e
 		if tr.credentialLifetime > 0 {
 			lt = tr.credentialLifetime
 		}
-
 		sas, err := creds.Token(creds.GetHostName(), lt)
 		if err != nil {
 			tr.logger.Errorf("cannot generate token: %s", err)
@@ -319,13 +317,14 @@ func parseCloudToDeviceTopic(s string) (map[string]string, error) {
 	return p, nil
 }
 
-func (tr *Transport) RegisterDirectMethods(ctx context.Context, mux transport.MethodDispatcher) error {
-	return tr.sub(tr.subDirectMethods(ctx, mux))
+func (tr *Transport) RegisterDirectMethods(parentContext context.Context, subscribeTimeout time.Duration, responseTimeout time.Duration, mux transport.MethodDispatcher) error {
+	return tr.sub(tr.subDirectMethods(parentContext, subscribeTimeout, responseTimeout, mux))
 }
 
-func (tr *Transport) subDirectMethods(ctx context.Context, mux transport.MethodDispatcher) subFunc {
+func (tr *Transport) subDirectMethods(parentContext context.Context, subscribeTimeout time.Duration, responseTimeout time.Duration, mux transport.MethodDispatcher) subFunc {
 	return func() error {
-		return contextToken(ctx, tr.conn.Subscribe(
+		subCtx, _ := context.WithTimeout(parentContext, subscribeTimeout)
+		return contextToken(subCtx, tr.conn.Subscribe(
 			"$iothub/methods/POST/#", DefaultQoS, func(_ mqtt.Client, m mqtt.Message) {
 				method, rid, err := parseDirectMethodTopic(m.Topic())
 				if err != nil {
@@ -338,10 +337,14 @@ func (tr *Transport) subDirectMethods(ctx context.Context, mux transport.MethodD
 					return
 				}
 				dst := fmt.Sprintf("$iothub/methods/res/%d/?$rid=%s", rc, rid)
-				if err = tr.send(ctx, dst, DefaultQoS, b); err != nil {
-					tr.logger.Errorf("method response error: %s", err)
-					return
-				}
+				// Respond asynchronously so we don't block paho shutdown or processing ever
+				go func() {
+					resCtx, _ := context.WithTimeout(parentContext, responseTimeout)
+					if err = tr.send(resCtx, dst, DefaultQoS, b); err != nil {
+						tr.logger.Errorf("method response error: %s", err)
+						return
+					}
+				}()
 			},
 		))
 	}

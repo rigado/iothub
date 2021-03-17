@@ -364,6 +364,8 @@ func testSubscribeTwin(t *testing.T, sc *iotservice.Client, dc *iotdevice.Client
 func testDirectMethod(t *testing.T, sc *iotservice.Client, dc *iotdevice.Client) {
 	if err := dc.RegisterMethod(
 		context.Background(),
+		time.Minute,
+		time.Minute,
 		"sum",
 		func(v map[string]interface{}) (map[string]interface{}, error) {
 			return map[string]interface{}{
