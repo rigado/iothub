@@ -22,6 +22,9 @@ import (
 // DefaultQoS is the default quality of service value.
 const DefaultQoS = 1
 
+// DefaultCredentialLifetime is the default credential timeout.
+const DefaultCredentialLifetime = time.Hour
+
 // TransportOption is a transport configuration option.
 type TransportOption func(tr *Transport)
 
@@ -72,6 +75,16 @@ func WithModelID(modelID string) TransportOption {
 	}
 }
 
+func WithCredentialLifetime(lt time.Duration) TransportOption {
+	return func(tr *Transport) {
+		if lt <= 0 {
+			//ignore
+			return
+		}
+		tr.credentialLifetime = lt
+	}
+}
+
 // New returns new Transport transport.
 // See more: https://docs.microsoft.com/en-us/azure/iot-hub/iot-hub-mqtt-support
 func New(opts ...TransportOption) transport.Transport {
@@ -102,7 +115,9 @@ type Transport struct {
 	cocfg  func(opts *mqtt.ClientOptions)
 
 	connListener ConnectListener
-	webSocket bool
+	webSocket    bool
+
+	credentialLifetime time.Duration
 }
 
 type resp struct {
@@ -151,7 +166,12 @@ func (tr *Transport) Connect(ctx context.Context, creds transport.Credentials) e
 		}
 		// TODO: renew token only when it expires in case an external token provider is used
 		// TODO: this can slow down the reconnect feature, so need to figure out max token lifetime
-		sas, err := creds.Token(creds.GetHostName(), time.Hour)
+		lt := DefaultCredentialLifetime
+		if tr.credentialLifetime > 0 {
+			lt = tr.credentialLifetime
+		}
+
+		sas, err := creds.Token(creds.GetHostName(), lt)
 		if err != nil {
 			tr.logger.Errorf("cannot generate token: %s", err)
 			return "", ""
@@ -563,7 +583,7 @@ func (tr *Transport) Close() error {
 	default:
 		close(tr.done)
 	}
-	if tr.conn != nil && tr.conn.IsConnected() {
+	if tr.conn != nil {
 		tr.conn.Disconnect(250)
 		tr.logger.Debugf("disconnected")
 	}
