@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/amenzhinsky/iothub/cmd/internal"
 	"github.com/amenzhinsky/iothub/iotdevice"
@@ -201,7 +202,7 @@ func directMethod(ctx context.Context, c *iotdevice.Client, args []string) error
 	in := bufio.NewReader(os.Stdin)
 	mu := &sync.Mutex{}
 
-	if err := c.RegisterMethod(ctx, args[0],
+	if err := c.RegisterMethod(ctx,time.Minute,time.Minute, args[0],
 		func(p map[string]interface{}) (map[string]interface{}, error) {
 			mu.Lock()
 			defer mu.Unlock()

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/amenzhinsky/iothub/common"
 	"github.com/amenzhinsky/iothub/iotdevice/transport"
@@ -179,7 +180,7 @@ func (c *Client) UnsubscribeEvents(sub *EventSub) {
 // returns an error when method is already registered.
 // If f returns an error and empty body its error string
 // used as value of the error attribute in the result json.
-func (c *Client) RegisterMethod(ctx context.Context, name string, fn DirectMethodHandler) error {
+func (c *Client) RegisterMethod(ctx context.Context, subscribeTimeout time.Duration, responseTimeout time.Duration,name string, fn DirectMethodHandler) error {
 	if err := c.checkConnection(ctx); err != nil {
 		return err
 	}
@@ -187,7 +188,7 @@ func (c *Client) RegisterMethod(ctx context.Context, name string, fn DirectMetho
 		return errors.New("name cannot be blank")
 	}
 	if err := c.dmMux.once(func() error {
-		return c.tr.RegisterDirectMethods(ctx, c.dmMux)
+		return c.tr.RegisterDirectMethods(ctx, subscribeTimeout,responseTimeout,c.dmMux)
 	}); err != nil {
 		return err
 	}
