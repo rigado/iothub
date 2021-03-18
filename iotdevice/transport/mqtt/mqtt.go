@@ -12,10 +12,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/amenzhinsky/iothub/logger"
-
 	"github.com/amenzhinsky/iothub/common"
 	"github.com/amenzhinsky/iothub/iotdevice/transport"
+	"github.com/amenzhinsky/iothub/logger"
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
@@ -87,7 +86,7 @@ func WithCredentialLifetime(lt time.Duration) TransportOption {
 
 // New returns new Transport transport.
 // See more: https://docs.microsoft.com/en-us/azure/iot-hub/iot-hub-mqtt-support
-func New(opts ...TransportOption) transport.Transport {
+func New(opts ...TransportOption) *Transport {
 	tr := &Transport{
 		done: make(chan struct{}),
 	}
@@ -232,6 +231,7 @@ func (tr *Transport) subEvents(ctx context.Context, mux transport.MessageDispatc
 	return func() error {
 		return contextToken(ctx, tr.conn.Subscribe(
 			"devices/"+tr.did+"/messages/devicebound/#", DefaultQoS, func(_ mqtt.Client, m mqtt.Message) {
+				tr.logger.Debugf("%d %s", m.Qos(), m.Topic())
 				msg, err := parseEventMessage(m)
 				if err != nil {
 					tr.logger.Errorf("message parse error: %s", err)
@@ -378,7 +378,7 @@ func parseDirectMethodTopic(s string) (string, string, error) {
 }
 
 func (tr *Transport) RetrieveTwinProperties(ctx context.Context) ([]byte, error) {
-	r, err := tr.request(ctx, "$iothub/twin/GET/?$rid=%d", nil)
+	r, err := tr.request(ctx, "$iothub/twin/GET/?$rid=%x", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -386,7 +386,7 @@ func (tr *Transport) RetrieveTwinProperties(ctx context.Context) ([]byte, error)
 }
 
 func (tr *Transport) UpdateTwinProperties(ctx context.Context, b []byte) (int, error) {
-	r, err := tr.request(ctx, "$iothub/twin/PATCH/properties/reported/?$rid=%d", b)
+	r, err := tr.request(ctx, "$iothub/twin/PATCH/properties/reported/?$rid=%x", b)
 	if err != nil {
 		return 0, err
 	}
@@ -496,7 +496,7 @@ func parseTwinPropsTopic(s string) (int, int, int, error) {
 	if len(q["$rid"]) != 1 {
 		return 0, 0, 0, errors.New("$rid is not available")
 	}
-	rid, err := strconv.Atoi(q["$rid"][0])
+	rid, err := strconv.ParseInt(q["$rid"][0], 16, 0)
 	if err != nil {
 		return 0, 0, 0, fmt.Errorf("$rid parse error: %s", err)
 	}
@@ -508,8 +508,10 @@ func parseTwinPropsTopic(s string) (int, int, int, error) {
 			return 0, 0, 0, err
 		}
 	}
-	return rc, rid, ver, nil
+	return rc, int(rid), ver, nil
 }
+
+const rfc3339Milli = "2006-01-02T15:04:05.999Z07:00"
 
 func (tr *Transport) Send(ctx context.Context, msg *common.Message) error {
 	// this is just copying functionality from the nodejs sdk, but
@@ -517,22 +519,25 @@ func (tr *Transport) Send(ctx context.Context, msg *common.Message) error {
 	// e.g. when $.exp is set the cloud just disconnects.
 	u := make(url.Values, len(msg.Properties)+5)
 	if msg.MessageID != "" {
-		u["$.mid"] = []string{msg.MessageID}
+		u.Add("$.mid", msg.MessageID)
 	}
 	if msg.CorrelationID != "" {
-		u["$.cid"] = []string{msg.CorrelationID}
+		u.Add("$.cid", msg.CorrelationID)
 	}
 	if msg.UserID != "" {
-		u["$.uid"] = []string{msg.UserID}
+		u.Add("$.uid", msg.UserID)
 	}
 	if msg.To != "" {
-		u["$.to"] = []string{msg.To}
+		u.Add("$.to", msg.To)
 	}
 	if msg.ExpiryTime != nil && !msg.ExpiryTime.IsZero() {
-		u["$.exp"] = []string{msg.ExpiryTime.UTC().Format(time.RFC3339)}
+		u.Add("$.exp", msg.ExpiryTime.UTC().Format(rfc3339Milli))
+	}
+	if msg.EnqueuedTime != nil && !msg.EnqueuedTime.IsZero() {
+		u.Add("$.ctime", msg.EnqueuedTime.UTC().Format(rfc3339Milli))
 	}
 	for k, v := range msg.Properties {
-		u[k] = []string{v}
+		u.Add(k, v)
 	}
 
 	dst := "devices/" + tr.did + "/messages/events/" + u.Encode()

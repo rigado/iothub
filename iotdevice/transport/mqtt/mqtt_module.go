@@ -15,7 +15,7 @@ import (
 
 // New returns new Transport transport.
 // See more: https://docs.microsoft.com/en-us/azure/iot-hub/iot-hub-mqtt-support
-func NewModuleTransport(opts ...TransportOption) transport.Transport {
+func NewModuleTransport(opts ...TransportOption) *ModuleTransport {
 	tr := &ModuleTransport{
 		Transport: Transport{
 			done: make(chan struct{}),
@@ -61,7 +61,11 @@ func (tr *ModuleTransport) Connect(ctx context.Context, creds transport.Credenti
 	username := creds.GetHostName() + "/" + creds.GetDeviceID() + "/" + creds.GetModuleID() + "/?api-version=2018-06-30"
 	o := mqtt.NewClientOptions()
 	o.SetTLSConfig(tlsCfg)
-	o.AddBroker("tls://" + creds.GetBroker() + ":8883")
+	if tr.webSocket {
+		o.AddBroker("wss://" + creds.GetHostName() + ":443/$iothub/websocket") // https://github.com/MicrosoftDocs/azure-docs/issues/21306
+	} else {
+		o.AddBroker("tls://" + creds.GetHostName() + ":8883")
+	}
 	o.SetProtocolVersion(4) // 4 = MQTT 3.1.1
 	o.SetClientID(creds.GetDeviceID() + "/" + creds.GetModuleID())
 	o.SetCredentialsProvider(func() (string, string) {

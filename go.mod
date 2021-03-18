@@ -1,9 +1,9 @@
 module github.com/amenzhinsky/iothub
 
-require (
-	github.com/Azure/go-amqp v0.13.1
-	github.com/eclipse/paho.mqtt.golang v1.2.0
-	golang.org/x/net v0.0.0-20201110031124-69a78807bb2b // indirect
-)
+go 1.16
 
-go 1.13
+require (
+	github.com/Azure/go-amqp v0.13.4
+	github.com/eclipse/paho.mqtt.golang v1.3.2
+	golang.org/x/net v0.0.0-20210224082022-3d97a244fca7 // indirect
+)

@@ -117,7 +117,9 @@ type Client struct {
 }
 
 // DirectMethodHandler handles direct method invocations.
-type DirectMethodHandler func(p map[string]interface{}) (map[string]interface{}, error)
+type DirectMethodHandler func(payload map[string]interface{}) (
+	code int, response map[string]interface{}, err error,
+)
 
 // DeviceID returns iothub device id.
 func (c *Client) DeviceID() string {
@@ -311,6 +313,20 @@ func WithSendProperties(m map[string]string) SendOption {
 		for k, v := range m {
 			msg.Properties[k] = v
 		}
+		return nil
+	}
+}
+
+func WithSendExpiryTime(t time.Time) SendOption {
+	return func(msg *common.Message) error {
+		msg.ExpiryTime = &t
+		return nil
+	}
+}
+
+func WithSendCreationTime(t time.Time) SendOption {
+	return func(msg *common.Message) error {
+		msg.EnqueuedTime = &t
 		return nil
 	}
 }

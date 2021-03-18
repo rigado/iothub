@@ -46,6 +46,12 @@ type Device struct {
 	Capabilities               map[string]interface{} `json:"capabilities,omitempty"`
 }
 
+type PurgeMessageQueueResult struct {
+	DeviceID            string `json:"deviceID,omitempty"`
+	ModuleID            string `json:"moduleID,omitempty"`
+	TotalMessagesPurged int    `json:"totalMessagesPurged,omitempty"`
+}
+
 type Module struct {
 	ModuleID                   string          `json:"moduleId,omitempty"`
 	DeviceID                   string          `json:"deviceId,omitempty"`
@@ -128,10 +134,14 @@ type Properties struct {
 	Reported map[string]interface{} `json:"reported,omitempty"`
 }
 
-type Stats struct {
+type DeviceStats struct {
 	DisabledDeviceCount uint `json:"disabledDeviceCount,omitempty"`
 	EnabledDeviceCount  uint `json:"enabledDeviceCount,omitempty"`
 	TotalDeviceCount    uint `json:"totalDeviceCount,omitempty"`
+}
+
+type ServiceStats struct {
+	ConnectedDeviceCount uint `json:"connectedDeviceCount"`
 }
 
 type Configuration struct {

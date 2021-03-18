@@ -297,6 +297,16 @@ func TestGetModuleTwin(t *testing.T) {
 	}
 }
 
+func TestPurgeQueue(t *testing.T) {
+	client := newClient(t)
+	device, _ := newDeviceAndModule(t, client)
+	if _, err := client.PurgeQueue(
+		context.Background(), device.DeviceID,
+	); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestUpdateModuleTwin(t *testing.T) {
 	client := newClient(t)
 	device, module := newDeviceAndModule(t, client)
@@ -362,9 +372,16 @@ func TestDeleteConfiguration(t *testing.T) {
 	}
 }
 
-func TestStats(t *testing.T) {
+func TestDeviceStats(t *testing.T) {
 	client := newClient(t)
-	if _, err := client.Stats(context.Background()); err != nil {
+	if _, err := client.DeviceStats(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestServiceStats(t *testing.T) {
+	client := newClient(t)
+	if _, err := client.ServiceStats(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -433,9 +450,8 @@ func TestScheduleMethodCall(t *testing.T) {
 	// find just cancelled job
 	var found bool
 	if err = client.QueryJobsV2(context.Background(), &JobV2Query{
-		Type:     JobTypeDeviceMethod,
-		Status:   JobStatusCancelled,
-		PageSize: 10,
+		Type:   JobTypeDeviceMethod,
+		Status: JobStatusCancelled,
 	}, func(j *JobV2) error {
 		if j.JobID == job.JobID {
 			found = true

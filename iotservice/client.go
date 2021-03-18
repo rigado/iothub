@@ -9,10 +9,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -105,6 +105,7 @@ type Client struct {
 	http   *http.Client // REST client
 
 	sendMu   sync.Mutex
+	sendSess *amqp.Session
 	sendLink *amqp.Sender
 
 	// TODO: figure out if it makes sense to cache feedback and file notification receivers
@@ -127,10 +128,14 @@ func (c *Client) newSession(ctx context.Context) (*amqp.Session, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		if err != nil {
+			_ = conn.Close()
+		}
+	}()
 
 	c.logger.Debugf("connected to %s", c.sak.HostName)
 	if err = c.putTokenContinuously(ctx, conn); err != nil {
-		_ = conn.Close()
 		return nil, err
 	}
 
@@ -157,13 +162,14 @@ func (c *Client) putTokenContinuously(ctx context.Context, conn *amqp.Client) er
 	if err != nil {
 		return err
 	}
-	defer sess.Close(context.Background())
 
 	if err := c.putToken(ctx, sess, tokenUpdateInterval); err != nil {
+		_ = sess.Close(context.Background())
 		return err
 	}
 
 	go func() {
+		defer sess.Close(context.Background())
 		ticker := time.NewTimer(tokenUpdateInterval - tokenUpdateSpan)
 		defer ticker.Stop()
 
@@ -434,15 +440,21 @@ func (c *Client) getSendLink(ctx context.Context) (*amqp.Sender, error) {
 	if err != nil {
 		return nil, err
 	}
-	// since the link is cached it's supposed to be closed along with the client itself
+	defer func() {
+		if err != nil {
+			_ = sess.Close(context.Background())
+		}
+	}()
 
-	c.sendLink, err = sess.NewSender(
+	link, err := sess.NewSender(
 		amqp.LinkTargetAddress("/messages/devicebound"),
 	)
 	if err != nil {
-		_ = sess.Close(context.Background())
 		return nil, err
 	}
+
+	c.sendSess = sess
+	c.sendLink = link
 	return c.sendLink, nil
 }
 
@@ -666,6 +678,20 @@ func (c *Client) GetDevice(ctx context.Context, deviceID string) (*Device, error
 		return nil, err
 	}
 	return &res, nil
+}
+
+func (c *Client) PurgeQueue(ctx context.Context, deviceID string) (*PurgeMessageQueueResult, error) {
+	var res PurgeMessageQueueResult
+	_, err := c.call(
+		ctx,
+		http.MethodDelete,
+		pathf("devices/%s/commands", deviceID),
+		nil,
+		nil,
+		nil,
+		&res,
+	)
+	return &res, err
 }
 
 // CreateDevice creates a new device.
@@ -978,6 +1004,106 @@ func (c *Client) UpdateModuleTwin(ctx context.Context, twin *ModuleTwin) (
 	return &res, nil
 }
 
+func (c *Client) GetDigitalTwin(
+	ctx context.Context, digitalTwinID string,
+) (map[string]interface{}, error) {
+	var res map[string]interface{}
+	if _, err := c.call(
+		ctx,
+		http.MethodGet,
+		pathf("digitaltwins/%s", digitalTwinID),
+		nil,
+		nil,
+		nil,
+		&res,
+	); err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
+func (c *Client) UpdateDigitalTwin(
+	ctx context.Context, digitalTwinID string, patch []map[string]interface{},
+) (map[string]interface{}, error) {
+	var res map[string]interface{}
+	if _, err := c.call(
+		ctx,
+		http.MethodPatch,
+		pathf("digitaltwins/%s", digitalTwinID),
+		nil,
+		nil, // TODO: ifMatchHeader(twin.ETag),
+		patch,
+		&res,
+	); err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
+type CallDigitalTwinOption func(q url.Values)
+
+func WithCallDigitalTwinConnectTimeout(seconds int) CallDigitalTwinOption {
+	return func(q url.Values) {
+		q.Set("connectTimeoutInSeconds", strconv.Itoa(seconds))
+	}
+}
+
+func WithCallDigitalTwinResponseTimeout(seconds int) CallDigitalTwinOption {
+	return func(q url.Values) {
+		q.Set("responseTimeoutInSeconds", strconv.Itoa(seconds))
+	}
+}
+
+func (c *Client) CallDigitalTwin(ctx context.Context,
+	digitalTwinID, command string, payload []byte, opts ...CallDigitalTwinOption,
+) (int, map[string]interface{}, error) {
+	return c.callDigitalTwin(ctx,
+		pathf("digitaltwins/%s/commands/%s", digitalTwinID, command),
+		payload, opts...,
+	)
+}
+
+func (c *Client) CallDigitalTwinComponent(ctx context.Context,
+	digitalTwinID, component, command string, payload []byte, opts ...CallDigitalTwinOption,
+) (int, map[string]interface{}, error) {
+	return c.callDigitalTwin(ctx,
+		pathf("digitaltwins/%s/components/%s/commands/%s",
+			digitalTwinID, component, command,
+		),
+		payload, opts...,
+	)
+}
+
+func (c *Client) callDigitalTwin(ctx context.Context,
+	path string, payload []byte, opts ...CallDigitalTwinOption,
+) (int, map[string]interface{}, error) {
+	var res map[string]interface{}
+	q := url.Values{}
+	for _, opt := range opts {
+		opt(q)
+	}
+	h, err := c.call(
+		ctx,
+		http.MethodPost,
+		path,
+		nil,
+		nil,
+		payload,
+		&res,
+	)
+	if err != nil {
+		return 0, nil, err
+	}
+	var code int
+	if s := h.Get("X-Ms-Command-Statuscode"); s != "" {
+		code, err = strconv.Atoi(s)
+		if err != nil {
+			return 0, nil, err
+		}
+	}
+	return code, res, nil
+}
+
 // ListConfigurations gets all available configurations from the registry.
 func (c *Client) ListConfigurations(ctx context.Context) ([]*Configuration, error) {
 	var res []*Configuration
@@ -1092,7 +1218,6 @@ func (c *Client) QueryDevices(
 		http.MethodPost,
 		"devices/query",
 		nil,
-		0, // TODO: control page size
 		map[string]string{
 			"Query": query,
 		},
@@ -1113,20 +1238,13 @@ func (c *Client) query(
 	method string,
 	path string,
 	vals url.Values,
-	pageSize uint,
 	req interface{},
 	res interface{},
 	fn func() error,
 ) error {
-	var token string
-QueryNext:
 	h := http.Header{}
-	if token != "" {
-		h.Add("x-ms-continuation", token)
-	}
-	if pageSize > 0 {
-		h.Add("x-ms-max-item-count", fmt.Sprintf("%d", pageSize))
-	}
+	// h.Add("x-ms-max-item-count", "1") // 1..100
+QueryNext:
 	header, err := c.call(
 		ctx,
 		method,
@@ -1142,19 +1260,36 @@ QueryNext:
 	if err = fn(); err != nil {
 		return err
 	}
-	if token = header.Get("x-ms-continuation"); token != "" {
+	if s := header.Get("x-ms-continuation"); s != "" {
+		h.Set("x-ms-continuation", s)
 		goto QueryNext
 	}
 	return nil
 }
 
-// Stats retrieves the device registry statistic.
-func (c *Client) Stats(ctx context.Context) (*Stats, error) {
-	var res Stats
+// DeviceStats retrieves the device registry statistic.
+func (c *Client) DeviceStats(ctx context.Context) (*DeviceStats, error) {
+	var res DeviceStats
 	if _, err := c.call(
 		ctx,
 		http.MethodGet,
 		"statistics/devices",
+		nil,
+		nil,
+		nil,
+		&res,
+	); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
+func (c *Client) ServiceStats(ctx context.Context) (*ServiceStats, error) {
+	var res ServiceStats
+	if _, err := c.call(
+		ctx,
+		http.MethodGet,
+		"statistics/service",
 		nil,
 		nil,
 		nil,
@@ -1234,9 +1369,8 @@ func (c *Client) CancelJob(ctx context.Context, jobID string) (map[string]interf
 }
 
 type JobV2Query struct {
-	Type     JobV2Type
-	Status   JobV2Status
-	PageSize uint
+	Type   JobV2Type
+	Status JobV2Status
 }
 
 func (c *Client) QueryJobsV2(
@@ -1255,7 +1389,6 @@ func (c *Client) QueryJobsV2(
 		http.MethodGet,
 		"jobs/v2/query",
 		vals,
-		q.PageSize,
 		nil,
 		&res,
 		func() error {
@@ -1328,13 +1461,20 @@ func (c *Client) call(
 ) (http.Header, error) {
 	var br io.Reader
 	if r != nil {
-		b, err := json.Marshal(r)
-		if err != nil {
-			return nil, err
+		var b []byte
+		if body, ok := r.([]byte); ok {
+			b = body
+		} else {
+			var err error
+			b, err = json.Marshal(r)
+			if err != nil {
+				return nil, err
+			}
 		}
 		br = bytes.NewReader(b)
 	}
-	q := url.Values{"api-version": []string{"2019-03-30"}}
+	q := url.Values{}
+	q.Set("api-version", "2020-09-30")
 	for k, vv := range vals {
 		for _, v := range vv {
 			q.Add(k, v)
@@ -1370,7 +1510,7 @@ func (c *Client) call(
 	defer res.Body.Close()
 	c.logger.Debugf("%s", (*responseDump)(res))
 
-	body, err := ioutil.ReadAll(res.Body)
+	body, err := io.ReadAll(res.Body)
 	if err != nil {
 		return nil, err
 	}
